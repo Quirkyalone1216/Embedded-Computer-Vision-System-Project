@@ -2,4 +2,6 @@ RefProgram
 .venv
 dataset
 tmp
-
+vggface_weights
+logs/
+face_weights/
