@@ -1,6 +1,5 @@
-RefProgram/tb_logs
-RefProgram/model_1
-RefProgram/train-1
+RefProgram
 .venv
 dataset
 tmp
+
