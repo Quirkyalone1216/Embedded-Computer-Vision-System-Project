@@ -5,3 +5,4 @@ tmp
 vggface_weights
 logs/
 face_weights/
+src/__pycache__/
