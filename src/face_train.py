@@ -21,6 +21,9 @@ import time
 import utils as my_utils
 import urllib.request
 
+from sklearn.metrics import classification_report, confusion_matrix, mean_absolute_error, mean_squared_error
+import json
+
 from random_eraser import get_random_eraser
 from mixup_generator import MixupGenerator
 
@@ -34,6 +37,8 @@ data_augmentation = True
 
 train_data_path = '././././dataset/archive/UTKFace'
 weights_output_path = './face_weights'
+
+os.makedirs('results', exist_ok=True)
 
 # learning rate schedule
 class Schedule:
@@ -94,6 +99,69 @@ def load_data():
     x = my_utils.preprocess_input(x, data_format='channels_last', version=2)
     return x, y_a, y_g, y_r
 
+
+# 新增：在測試集上計算並呈現各任務的最終指標，並輸出 CSV 及混淆矩陣圖片到 results
+def evaluate_on_testset(model, x_test, y_test_a, y_test_g, y_test_r):
+    # 評估 Loss 與 Accuracy
+    results = model.evaluate(
+        x_test, [y_test_a, y_test_g, y_test_r],
+        batch_size=32, verbose=0
+    )
+    total_loss, age_loss, gender_loss, race_loss, age_acc, gender_acc, race_acc = (
+        results[0], results[1], results[2], results[3], results[4], results[5], results[6]
+    )
+
+    # 取得預測結果
+    preds = model.predict(x_test, batch_size=32, verbose=0)
+    pred_age    = np.argmax(preds[0], axis=1)
+    pred_gender = np.argmax(preds[1], axis=1)
+    pred_race   = np.argmax(preds[2], axis=1)
+
+    true_age    = np.argmax(y_test_a, axis=1)
+    true_gender = np.argmax(y_test_g, axis=1)
+    true_race   = np.argmax(y_test_r, axis=1)
+
+    # ===== 新增：計算 MAE / MSE / RMSE =====
+    true_age_year = true_age + 1
+    pred_age_year = pred_age + 1
+    mae_age = mean_absolute_error(true_age_year, pred_age_year)
+    mse_age = mean_squared_error(true_age_year, pred_age_year)
+    rmse_age = np.sqrt(mse_age)
+
+
+    # 建立字典來儲存最終指標，並存成 JSON
+    metrics = {
+        'age': {
+            'loss': age_loss,
+            'accuracy': age_acc,
+            'MAE': float(mae_age),
+            'MSE': float(mse_age),
+            'RMSE': float(rmse_age)
+        },
+        'gender': {'loss': gender_loss, 'accuracy': gender_acc},
+        'race':   {'loss': race_loss,   'accuracy': race_acc}
+    }
+    with open('results/test_metrics.json', 'w', encoding='utf-8') as f:
+        json.dump(metrics, f, ensure_ascii=False, indent=2)
+
+    # 性別 & 人種的混淆矩陣
+    cm_gender = confusion_matrix(true_gender, pred_gender)
+    cm_race   = confusion_matrix(true_race, pred_race)
+
+    # 將 classification report 也輸出成 CSV
+    cr_age    = classification_report(true_age, pred_age, output_dict=True)
+    cr_gender = classification_report(true_gender, pred_gender, output_dict=True)
+    cr_race   = classification_report(true_race, pred_race, output_dict=True)
+
+    # 將 classification report 存成 JSON
+    with open('results/cr_age.json', 'w', encoding='utf-8') as f:
+        json.dump(cr_age, f, ensure_ascii=False, indent=2)
+    with open('results/cr_gender.json', 'w', encoding='utf-8') as f:
+        json.dump(cr_gender, f, ensure_ascii=False, indent=2)
+    with open('results/cr_race.json', 'w', encoding='utf-8') as f:
+        json.dump(cr_race, f, ensure_ascii=False, indent=2)
+
+    print("已將測試結果儲存至 results 資料夾")
 
 '''
 fine-tuning with UTKFace dataset
@@ -188,6 +256,17 @@ def train():
             verbose=1,
             callbacks=callbacks
         )
+
+    # 把 history.history 內的 NumPy 型別都轉成純 Python 型別
+    history_py = {}
+    for key, values in history.history.items():
+        # values 通常是 list of numpy.float32／numpy.int32…，把它們轉成 Python float/int
+        history_py[key] = [float(v) for v in values]
+    with open('results/history.json', 'w', encoding='utf-8') as f:
+        json.dump(history_py, f, ensure_ascii=False, indent=2)
+
+    # 在測試集上做最終評估並將結果輸出到 results
+    evaluate_on_testset(model, x_test, y_test_a, y_test_g, y_test_r)
 
 
 if __name__ == '__main__':
