@@ -1,87 +1,198 @@
-'''
-demo for camera with OpenCV Haar Cascades using TFLite model
-'''
-
 import numpy as np
 import cv2
 import tensorflow as tf           # for tf.lite.Interpreter
 from utils import putText, preprocess_input
 
 # ------------------------------------------------------------------
-# 1. 載入 TFLite 模型
+# 1. 載入 TFLite 模型並取得張量資訊
 # ------------------------------------------------------------------
-tflite_model_path = r'face_weights\face_model.tflite'
-interpreter = tf.lite.Interpreter(model_path=tflite_model_path)
-interpreter.allocate_tensors()
+def load_tflite_model(model_path):
+    """
+    載入 TFLite 模型並分配張量緩衝區。
+    回傳 interpreter、input_details、output_details 三個物件。
+    """
+    interpreter = tf.lite.Interpreter(model_path=model_path)
+    interpreter.allocate_tensors()
+    input_details  = interpreter.get_input_details()
+    output_details = interpreter.get_output_details()
+    return interpreter, input_details, output_details
 
-# 取得輸入和輸出張量的 details
-input_details  = interpreter.get_input_details()
-output_details = interpreter.get_output_details()
-
-# ------------------------------------------------------------------
-# 2. 標籤設定
-# ------------------------------------------------------------------
-gender_labels = ['Male', 'Female']
-race_labels   = ['Whites', 'Blacks', 'Asian', 'Indian', 'Others']
-age_labels    = np.arange(1, 94)
 
 # ------------------------------------------------------------------
-# 3. 初始化 Haar Cascade（人臉偵測）
+# 2. 取得標籤清單（Labels）
 # ------------------------------------------------------------------
-face_cascade = cv2.CascadeClassifier(
-    cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-)
+def get_labels():
+    """
+    回傳三組標籤：性別、種族、年齡。
+    年齡以 1~93 為範圍。
+    """
+    gender_labels = ['Male', 'Female']
+    race_labels   = ['Whites', 'Blacks', 'Asian', 'Indian', 'Others']
+    age_labels    = np.arange(1, 94)  # 1 至 93，共 93 種年齡
+    return gender_labels, race_labels, age_labels
+
 
 # ------------------------------------------------------------------
-# 4. 開啟攝影機
+# 3. 初始化 Haar Cascade（人臉偵測器）
 # ------------------------------------------------------------------
-cap = cv2.VideoCapture(0)
+def init_face_detector():
+    """
+    使用 OpenCV 內建 Haar Cascade XML 檔，初始化人臉偵測器。
+    回傳一個 cv2.CascadeClassifier 物件。
+    """
+    cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+    face_cascade = cv2.CascadeClassifier(cascade_path)
+    return face_cascade
 
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        break
 
-    # 轉灰階進行人臉偵測
-    gray  = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    faces = face_cascade.detectMultiScale(
-        gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
-    )
+# ------------------------------------------------------------------
+# 4. 針對單張人臉 Region 進行前處理並做推論
+# ------------------------------------------------------------------
+def predict_face_attributes(interpreter, input_details, output_details, face_img):
+    """
+    輸入：
+      - interpreter: 已配置好的 TFLite Interpreter
+      - input_details, output_details: 取得的張量資訊
+      - face_img: 已經裁成 (H, W, 3) BGR 影像（此範例假設大小為 200×200）
+    會將 face_img 做 preprocess_input，送入 interpreter，invoke 之後回傳三組機率向量。
+    回傳：
+      - preds_ages: 長度 93 的年齡機率向量
+      - preds_genders: 長度 2 的性別機率向量
+      - preds_races: 長度 5 的種族機率向量
+    """
+    # 1. 確保輸入是 float32，並加上 batch 維度
+    inp = preprocess_input(np.expand_dims(face_img.astype(np.float32), axis=0))
+    
+    # 2. 設定輸入張量
+    interpreter.set_tensor(input_details[0]['index'], inp)
+    # 3. 執行推論
+    interpreter.invoke()
+    
+    # 4. 取得三組輸出
+    preds_ages    = interpreter.get_tensor(output_details[0]['index'])[0]
+    preds_genders = interpreter.get_tensor(output_details[1]['index'])[0]
+    preds_races   = interpreter.get_tensor(output_details[2]['index'])[0]
+    return preds_ages, preds_genders, preds_races
 
-    for (x, y, w, h) in faces:
-        # 裁切並 resize
-        face_img = frame[y:y+h, x:x+w]
-        face_img = cv2.resize(face_img, (200, 200))
-        # 預處理（同訓練時）
-        inp = preprocess_input(np.expand_dims(face_img.astype(np.float32), axis=0))
 
-        # 設定輸入張量
-        interpreter.set_tensor(input_details[0]['index'], inp)
-        interpreter.invoke()
-
-        # 取得三組輸出
-        preds_ages    = interpreter.get_tensor(output_details[0]['index'])[0]
-        preds_genders = interpreter.get_tensor(output_details[1]['index'])[0]
-        preds_races   = interpreter.get_tensor(output_details[2]['index'])[0]
-
-        # 找最大機率索引
+# ------------------------------------------------------------------
+# 5. 在原影格上繪製人臉框與屬性文字
+# ------------------------------------------------------------------
+def annotate_frame(frame, faces, preds_list, labels_list):
+    """
+    將每個人臉 ROI 的預測結果，繪製到原始影格 frame 上。
+    參數：
+      - frame: 原始 BGR 影像
+      - faces: Haar Cascade 回傳的 list of (x, y, w, h)
+      - preds_list: 每個人臉對應的 (preds_ages, preds_genders, preds_races) tuple list
+      - labels_list: 三組標籤 (gender_labels, race_labels, age_labels)
+    回傳：
+      - 修改後的 frame（已經畫好矩形框與文字）
+    """
+    gender_labels, race_labels, age_labels = labels_list
+    
+    for (x, y, w, h), (preds_ages, preds_genders, preds_races) in zip(faces, preds_list):
+        # 取最大機率索引
         age_idx  = np.argmax(preds_ages)
         gen_idx  = np.argmax(preds_genders)
         race_idx = np.argmax(preds_races)
+        
+        # 唯有在此取得對應的文字
+        age_text   = f'Age: {age_labels[age_idx]}'
+        gender_text= f'Gender: {gender_labels[gen_idx]}'
+        # race_text  = f'Race: {race_labels[race_idx]}'  # 若要顯示種族，可取消註解
+        
+        # 繪製人臉框
+        cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
+        
+        # 疊加文字：年齡、性別（種族留作範例，若需顯示可自行取消）
+        frame = putText(frame, age_text,    (255, 0, 0), (x, y - 20), size=20)
+        frame = putText(frame, gender_text, (255, 0, 0), (x, y - 40), size=20)
+        # frame = putText(frame, race_text,   (255, 0, 0), (x, y - 60), size=20)
+    
+    return frame
 
-        # 畫人臉框
-        cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 0, 0), 2)
 
-        # 疊加文字
-        frame = putText(frame, f'Age: {age_labels[age_idx]}',       (255, 0, 0), (x, y - 20), size=20)
-        frame = putText(frame, f'Gender: {gender_labels[gen_idx]}', (255, 0, 0), (x, y - 40), size=20)
-        # frame = putText(frame, f'Race: {race_labels[race_idx]}',    (255, 0, 0), (x, y - 60), size=20)
+# ------------------------------------------------------------------
+# 6. 處理單張影格：偵測臉部 → 裁切 → 推論 → 標註
+# ------------------------------------------------------------------
+def process_frame(frame, face_cascade, interpreter, input_details, output_details, labels_list):
+    """
+    對單張 frame 執行以下步驟：
+      1. 轉灰階並用 Haar Cascade 偵測人臉
+      2. 裁切每個人臉為 200×200
+      3. 呼叫 predict_face_attributes 做推論
+      4. 呼叫 annotate_frame 在 frame 上繪製結果
+    回傳修改後的 frame。
+    """
+    # 1. 轉灰階
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    # 2. 多尺度偵測人臉，回傳 list of (x, y, w, h)
+    faces = face_cascade.detectMultiScale(
+        gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
+    )
+    
+    preds_list = []
+    # 3. 針對每張偵測到的人臉，裁切 → resize → 推論
+    for (x, y, w, h) in faces:
+        face_img = frame[y:y + h, x:x + w]
+        face_img = cv2.resize(face_img, (200, 200))
+        preds_ages, preds_genders, preds_races = predict_face_attributes(
+            interpreter, input_details, output_details, face_img
+        )
+        preds_list.append((preds_ages, preds_genders, preds_races))
+    
+    # 4. 如有偵測到至少一張人臉，則在 frame 上繪製結果
+    if len(faces) > 0:
+        frame = annotate_frame(frame, faces, preds_list, labels_list)
+    
+    return frame
 
-    # 顯示結果
-    cv2.imshow('TFLite Haar Cascade Face Demo', frame)
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
 
-# 清理
-cap.release()
-cv2.destroyAllWindows()
+# ------------------------------------------------------------------
+# 7. 主程式：開啟攝影機並持續擷取／顯示影格
+# ------------------------------------------------------------------
+def main():
+    # 7-1. 載入模型
+    model_path = r'face_weights\face_model.tflite'
+    interpreter, input_details, output_details = load_tflite_model(model_path)
+    
+    # 7-2. 取得標籤
+    gender_labels, race_labels, age_labels = get_labels()
+    labels_list = (gender_labels, race_labels, age_labels)
+    
+    # 7-3. 初始化人臉偵測器
+    face_cascade = init_face_detector()
+    
+    # 7-4. 開啟預設攝影機
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        print("無法開啟攝影機，請檢查攝影機是否可用。")
+        return
+    
+    print("按下 'q' 鍵即可結束程式。")
+    
+    # 7-5. 開始逐影格處理
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            print("擷取影格失敗，結束程式。")
+            break
+        
+        # 處理並取得帶有標註的影格
+        annotated_frame = process_frame(
+            frame, face_cascade, interpreter, input_details, output_details, labels_list
+        )
+        
+        # 顯示結果
+        cv2.imshow('TFLite Haar Cascade Face Demo', annotated_frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+    
+    # 7-6. 清理
+    cap.release()
+    cv2.destroyAllWindows()
+
+
+if __name__ == "__main__":
+    main()
