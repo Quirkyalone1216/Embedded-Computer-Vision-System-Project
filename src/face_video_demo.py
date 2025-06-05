@@ -2,6 +2,7 @@ import numpy as np
 import cv2
 import tensorflow as tf           # for tf.lite.Interpreter
 from utils import putText, preprocess_input
+import os
 
 # ------------------------------------------------------------------
 # 1. 載入 TFLite 模型並取得張量資訊
@@ -150,48 +151,78 @@ def process_frame(frame, face_cascade, interpreter, input_details, output_detail
 
 
 # ------------------------------------------------------------------
-# 7. 主程式：開啟攝影機並持續擷取／顯示影格
+# 7a. 處理靜態圖片：讀取、推論與顯示
 # ------------------------------------------------------------------
-def main():
-    # 7-1. 載入模型
-    model_path = r'face_weights\face_model.tflite'
-    interpreter, input_details, output_details = load_tflite_model(model_path)
-    
-    # 7-2. 取得標籤
-    gender_labels, race_labels, age_labels = get_labels()
-    labels_list = (gender_labels, race_labels, age_labels)
-    
-    # 7-3. 初始化人臉偵測器
-    face_cascade = init_face_detector()
-    
-    # 7-4. 開啟預設攝影機
+def process_static_image(img_path, face_cascade, interpreter, input_details, output_details, labels_list):
+    """
+    讀取指定路徑的靜態圖片，進行人臉偵測與屬性推論，並顯示標註後結果。
+    """
+    if not os.path.exists(img_path):
+        print(f"Static image not found: {img_path}")
+        return
+    img = cv2.imread(img_path)
+    if img is None:
+        print(f"無法讀取靜態圖片：{img_path}")
+        return
+    annotated_img = process_frame(
+        img, face_cascade, interpreter, input_details, output_details, labels_list
+    )
+    # 縮小顯示視窗：將影像縮放至原始尺寸一半
+    h, w = annotated_img.shape[:2]
+    small_img = cv2.resize(annotated_img, (int(w * 0.5), int(h * 0.5)))
+    cv2.imshow('Static Image Test', small_img)
+    cv2.waitKey(0)
+    cv2.destroyWindow('Static Image Test')
+
+
+# ------------------------------------------------------------------
+# 7b. 處理即時影像：開啟攝影機並持續擷取／顯示影格
+# ------------------------------------------------------------------
+def process_realtime(face_cascade, interpreter, input_details, output_details, labels_list):
+    """
+    開啟預設攝影機，對每個影格執行人臉偵測與屬性推論，並即時顯示標註結果。按 'q' 鍵結束。
+    """
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("無法開啟攝影機，請檢查攝影機是否可用。")
         return
-    
     print("按下 'q' 鍵即可結束程式。")
-    
-    # 7-5. 開始逐影格處理
     while True:
         ret, frame = cap.read()
         if not ret:
             print("擷取影格失敗，結束程式。")
             break
-        
-        # 處理並取得帶有標註的影格
         annotated_frame = process_frame(
             frame, face_cascade, interpreter, input_details, output_details, labels_list
         )
-        
-        # 顯示結果
         cv2.imshow('TFLite Haar Cascade Face Demo', annotated_frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
-    
-    # 7-6. 清理
     cap.release()
     cv2.destroyAllWindows()
+
+
+# ------------------------------------------------------------------
+# 7. 主程式：載入模型、初始化並呼叫靜態／即時流程
+# ------------------------------------------------------------------
+def main():
+    # 7-1. 載入模型
+    model_path = r'face_weights\face_model.tflite'
+    interpreter, input_details, output_details = load_tflite_model(model_path)
+
+    # 7-2. 取得標籤
+    gender_labels, race_labels, age_labels = get_labels()
+    labels_list = (gender_labels, race_labels, age_labels)
+
+    # 7-3. 初始化人臉偵測器
+    face_cascade = init_face_detector()
+
+    # 7-4. 處理靜態圖片測試
+    test_img_path = r'tmp\archive\test\18-20\26.jpg'
+    process_static_image(test_img_path, face_cascade, interpreter, input_details, output_details, labels_list)
+
+    # # 7-5. 處理即時影像
+    # process_realtime(face_cascade, interpreter, input_details, output_details, labels_list)
 
 
 if __name__ == "__main__":
