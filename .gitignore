@@ -7,3 +7,4 @@ logs/
 face_weights/
 src/__pycache__/
 results
+.vscode/
