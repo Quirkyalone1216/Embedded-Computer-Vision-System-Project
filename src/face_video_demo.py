@@ -29,7 +29,7 @@ def get_labels():
     """
     gender_labels = ['Male', 'Female']
     race_labels   = ['Whites', 'Blacks', 'Asian', 'Indian', 'Others']
-    age_labels    = np.arange(1, 94)  # 1 至 93，共 93 種年齡
+    age_labels    = np.arange(94)     # 0 至 93，共 94 種年齡
     return gender_labels, race_labels, age_labels
 
 
@@ -93,15 +93,14 @@ def annotate_frame(frame, faces, preds_list, labels_list):
     gender_labels, race_labels, age_labels = labels_list
     
     for (x, y, w, h), (preds_ages, preds_genders, preds_races) in zip(faces, preds_list):
-        # 取最大機率索引
-        age_idx  = np.argmax(preds_ages)
-        gen_idx  = np.argmax(preds_genders)
-        race_idx = np.argmax(preds_races)
+        # 計算年齡分類的期望值 (加權平均)
+        age_val    = preds_ages.dot(age_labels)
+        gen_idx    = np.argmax(preds_genders)
+        race_idx   = np.argmax(preds_races)
         
-        # 唯有在此取得對應的文字
-        age_text   = f'Age: {age_labels[age_idx]}'
+        age_text   = f'Age: {age_val:.1f}'
         gender_text= f'Gender: {gender_labels[gen_idx]}'
-        # race_text  = f'Race: {race_labels[race_idx]}'  # 若要顯示種族，可取消註解
+        race_text  = f'Race: {race_labels[race_idx]}'  # 若要顯示種族，可取消註解
         
         # 繪製人臉框
         cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
@@ -109,7 +108,7 @@ def annotate_frame(frame, faces, preds_list, labels_list):
         # 疊加文字：年齡、性別（種族留作範例，若需顯示可自行取消）
         frame = putText(frame, age_text,    (255, 0, 0), (x, y - 20), size=20)
         frame = putText(frame, gender_text, (255, 0, 0), (x, y - 40), size=20)
-        # frame = putText(frame, race_text,   (255, 0, 0), (x, y - 60), size=20)
+        frame = putText(frame, race_text,   (255, 0, 0), (x, y - 60), size=20)
     
     return frame
 
@@ -137,7 +136,7 @@ def process_frame(frame, face_cascade, interpreter, input_details, output_detail
     # 3. 針對每張偵測到的人臉，裁切 → resize → 推論
     for (x, y, w, h) in faces:
         face_img = frame[y:y + h, x:x + w]
-        face_img = cv2.resize(face_img, (200, 200))
+        face_img = cv2.resize(face_img, (224, 224))
         preds_ages, preds_genders, preds_races = predict_face_attributes(
             interpreter, input_details, output_details, face_img
         )

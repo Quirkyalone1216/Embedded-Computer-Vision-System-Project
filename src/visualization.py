@@ -23,10 +23,27 @@ def plot_training_curves(history):
     plt.savefig('results/output/training_val_loss.png')
     plt.close()
 
+    # 分支 Loss 曲線（Age/Gender/Race train & val）
+    plt.figure(figsize=(6, 4))
+    plt.plot(epochs, h['predictions_age_loss'],       label='train age loss')
+    plt.plot(epochs, h['val_predictions_age_loss'],   label='val age loss')
+    plt.plot(epochs, h['predictions_gender_loss'],    label='train gender loss')
+    plt.plot(epochs, h['val_predictions_gender_loss'],label='val gender loss')
+    plt.plot(epochs, h['predictions_race_loss'],      label='train race loss')
+    plt.plot(epochs, h['val_predictions_race_loss'],  label='val race loss')
+    plt.title('Branch Loss Curves')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.tight_layout()
+    plt.savefig('results/output/branch_loss.png')
+    plt.close()
+
     # 年齡分支 Accuracy
     plt.figure(figsize=(6, 4))
-    plt.plot(epochs, h['predications_age_accuracy'],  label='train age acc')
-    plt.plot(epochs, h['val_predications_age_accuracy'], label='val age acc')
+    plt.plot(epochs, h['predictions_age_accuracy'],       label='train age acc')
+    plt.plot(epochs, h['val_predictions_age_accuracy'],   label='val age acc')
     plt.title('Age Branch Accuracy')
     plt.xlabel('Epoch')
     plt.ylabel('Accuracy')
@@ -38,8 +55,8 @@ def plot_training_curves(history):
 
     # 性別分支 Accuracy
     plt.figure(figsize=(6, 4))
-    plt.plot(epochs, h['predications_gender_accuracy'],  label='train gender acc')
-    plt.plot(epochs, h['val_predications_gender_accuracy'], label='val gender acc')
+    plt.plot(epochs, h['predictions_gender_accuracy'],       label='train gender acc')
+    plt.plot(epochs, h['val_predictions_gender_accuracy'],   label='val gender acc')
     plt.title('Gender Branch Accuracy')
     plt.xlabel('Epoch')
     plt.ylabel('Accuracy')
@@ -51,8 +68,8 @@ def plot_training_curves(history):
 
     # 人種分支 Accuracy
     plt.figure(figsize=(6, 4))
-    plt.plot(epochs, h['predications_race_accuracy'],  label='train race acc')
-    plt.plot(epochs, h['val_predications_race_accuracy'], label='val race acc')
+    plt.plot(epochs, h['predictions_race_accuracy'],       label='train race acc')
+    plt.plot(epochs, h['val_predictions_race_accuracy'],   label='val race acc')
     plt.title('Race Branch Accuracy')
     plt.xlabel('Epoch')
     plt.ylabel('Accuracy')
@@ -61,7 +78,6 @@ def plot_training_curves(history):
     plt.tight_layout()
     plt.savefig('results/output/race_accuracy.png')
     plt.close()
-
 
 # 新增：在測試集上計算並呈現各任務的最終指標，並輸出 CSV 及混淆矩陣圖片到 results
 def evaluate_on_testset(model, x_test, y_test_a, y_test_g, y_test_r):
@@ -147,17 +163,16 @@ if __name__ == '__main__':
     history = DummyHistory(hist_dict)
     plot_training_curves(history)
 
-    # 2. 從 test_metrics.json 讀取測試指標並分別產生 Loss 與 Accuracy 長條圖
+    # 2. 從 test_metrics.json 讀取測試指標並繪製圖表
     with open('results/test_metrics.json', 'r', encoding='utf-8') as f:
-        test_metrics = json.load(f)
+        tm = json.load(f)
+
+    # (1) Test Loss by Branch (age/gender/race)
     branches = ['age', 'gender', 'race']
-    losses = [test_metrics[b]['loss'] for b in branches]
-    accuracies = [test_metrics[b]['accuracy'] for b in branches]
+    losses = [tm[b]['loss'] for b in branches]
     x = np.arange(len(branches))
-    bar_width = 0.6
-    # 繪製 Test Loss 長條圖
     plt.figure(figsize=(6, 4))
-    plt.bar(x, losses, width=bar_width, label='Test Loss', alpha=0.7)
+    plt.bar(x, losses, width=0.6, alpha=0.7)
     plt.xticks(x, branches)
     plt.title('Test Loss by Branch')
     plt.xlabel('Branch')
@@ -166,10 +181,29 @@ if __name__ == '__main__':
     plt.tight_layout()
     plt.savefig('results/output/test_loss_by_branch.png')
     plt.close()
-    # 繪製 Test Accuracy 長條圖
+
+    # (2) Age Regression Metrics (MAE, MSE, RMSE)
+    age_labels = ['MAE', 'RMSE']
+    age_vals   = [tm['age']['MAE'], tm['age']['RMSE']]
+    x2 = np.arange(len(age_labels))
     plt.figure(figsize=(6, 4))
-    plt.bar(x, accuracies, width=bar_width, label='Test Accuracy', alpha=0.7)
-    plt.xticks(x, branches)
+    plt.bar(x2, age_vals, width=0.6, alpha=0.7)
+    plt.xticks(x2, age_labels)
+    plt.title('Age Regression Metrics')
+    plt.xlabel('Metric')
+    plt.ylabel('Value')
+    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.tight_layout()
+    plt.savefig('results/output/age_regression_metrics.png')
+    plt.close()
+
+    # (3) Classification Accuracy by Branch (gender & race)
+    cls_branches = ['gender', 'race']
+    accs = [tm[b]['accuracy'] for b in cls_branches]
+    x3 = np.arange(len(cls_branches))
+    plt.figure(figsize=(6, 4))
+    plt.bar(x3, accs, width=0.6, alpha=0.7)
+    plt.xticks(x3, cls_branches)
     plt.title('Test Accuracy by Branch')
     plt.xlabel('Branch')
     plt.ylabel('Accuracy')
@@ -179,7 +213,7 @@ if __name__ == '__main__':
     plt.close()
 
     # 3. 讀取並儲存各分類報表為 CSV
-    for branch in ['age', 'gender', 'race']:
+    for branch in ['gender', 'race']:
         with open(f'results/cr_{branch}.json', 'r', encoding='utf-8') as f:
             cr = json.load(f)
         # 將 classification report 直接以 JSON 形式儲存
