@@ -61,8 +61,8 @@
 
 ## 參考資料連結
 
-- **Face_properties_based_on_vggface Github**：Sample Project  
-  https://github.com/sherlockchou86/face_properties_based_vggface  
+- **Gender-and-Age-Detection Github**：Sample Project  
+  https://github.com/smahesh29/Gender-and-Age-Detection  
 
 - **UTKFace 資料集 (原始版)**：20,000+ 張人臉影像，年齡範圍 0–116 歲，可作為年齡與性別預測訓練用。  
   https://www.kaggle.com/datasets/jangedoo/utkface-new  

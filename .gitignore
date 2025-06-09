@@ -8,3 +8,4 @@ face_weights/
 src/__pycache__/
 results
 .vscode/
+__pycache__/
