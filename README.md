@@ -1,104 +1,104 @@
-## 一、專題名稱  
-**Android + Python 嵌入式年齡與性別預測系統**
+## 一、專案名稱
+
+**Python 年齡與性別預測訓練與推論系統**
 
 ---
 
-## 二、背景與動機  
-- 隨著邊緣運算需求增加，將 AI 推論下放到行動裝置可降低延遲並保護使用者隱私  
-- 年齡與性別推論是智慧零售、社群互動、行銷分析等多元應用的重要基礎  
-- 本專題藉由整合 TensorFlow Lite 與 Android 平台，實現「即拍即看」的人臉年齡及性別預測  
+## 二、專案概述
+
+本專案提供一個完整的從資料前處理、模型訓練、量化轉檔到即時推論的 Python Pipeline，透過已標註的 UTKFace 資料集，以 VGGFace 為 backbone 訓練多輸出神經網路，同時支援 TensorFlow Lite 轉檔及 OpenCV 即時推論介面。
 
 ---
 
-## 三、專題目標  
-1. 自行訓練 AgeNet（年齡回歸）與 GenderNet（性別分類）模型，並量化轉檔為 `.tflite`  
-2. 在 Android 應用中嵌入人臉偵測（MediaPipe 或 OpenCV DNN）與 TFLite 模型，完成即時推論功能  
-3. 以「XX 歲，男性／女性」可視化標籤疊加在 Camera Preview 上；並測試不同裝置效能  
+## 三、主要功能
+
+1. **資料前處理**：自動讀取 UTKFace 資料集、解析年齡與性別標籤，支援影像縮放、正規化與分桶（年齡分類）。
+2. **模型訓練**：以 Keras 建構多輸出模型，分支同時輸出性別（二分類）、年齡回歸與年齡分組（十分類），整合早停與最佳模型權重保存。
+3. **效能評估**：繪製訓練/驗證階段的 Loss、Accuracy、MAE 曲線，並生成混淆矩陣與年齡誤差直方圖。
+4. **TensorFlow Lite 轉檔**：將訓練後的 `.h5` 模型轉為動態範圍量化的 `.tflite`，支援書寫到檔案並驗證轉檔結果。
+5. **推論腳本**：利用 OpenCV Haar Cascade 偵測人臉，支援靜態影像或攝影機串流的即時推論，並可疊加預測結果與 Grad-CAM 熱力圖。
 
 ---
 
-## 四、技術架構  
-![alt text](image.png)
+## 四、專案結構
+
+```
+├── TrainModel.py       # 訓練主程式：資料讀取、模型建置、訓練、評估與預測輸出
+├── utils.py            # 工具函式：VGGFace 前處理、Label Decode、文字標註、TFLite 轉檔
+├── Inference.py        # 推論主程式：人臉偵測、推論、Grad-CAM 整合與顯示/存檔
+├── results/            # 訓練結果（模型權重、指標圖、Log）
+│   ├── opt/            # 優化參數或轉檔模型存放
+│   └── figures/        # 評估圖表輸出
+├── data/               # 放置原始 UTKFace 影像資料集
+└── README.md           # 專案說明
+```
 
 ---
 
-## 五、開發流程  
-1. **資料蒐集與前處理**  
-   - 下載 UTKFace 與 Adience 資料集，解析檔名獲取年齡／性別標籤  
-   - MediaPipe 或 Dlib 偵測人臉並裁切為 128×128 影像，標準化像素值，設計資料增強  
+## 五、環境與安裝
 
-2. **模型設計與訓練**  
-   - AgeNet：輕量 CNN + MAE 損失，輸出連續年齡  
-   - GenderNet：相同特徵提取層 + Softmax 分類  
-   - 在 Google Colab GPU 上訓練、加入早停與學習率調度，監控 MAE 與準確率指標  
+1. 建議使用 Python 3.8 以上版本。
+2. 安裝相依套件：
 
-3. **TensorFlow Lite 轉檔**  
-   - 啟用動態範圍量化，生成 `agenet.tflite`、`gendernet.tflite`，檔案大小控制在 1–2 MB  
+```bash
+pip install -r requirements.txt
+```
 
-4. **Android 端整合**  
-   - 引入 TFLite Task Vision、GPU Delegate；實現影像擷取、預處理、推論、後處理、UI 疊加  
-   - 利用 Profiler 測試不同設備推論延遲，優化模型量化與委派策略  
+*requirements.txt* 範例內容：
 
----
-
-## 六、時程規劃  
-| 週次   | 內容                             | 產出成果                     |
-| ------ | -------------------------------- | ---------------------------- |
-| 1      | 環境設定、資料集準備             | 資料處理程式、分割後資料      |
-| 2–3    | 模型設計、訓練與驗證             | AgeNet/GenderNet Keras 模型檔 |
-| 4      | TFLite 轉檔與量化                | `.tflite` 檔案               |
-| 5–6    | Android 應用開發與整合           | Android App 原型             |
-| 7      | 效能測試、優化與跨裝置相容性驗證 | 效能報告與優化版 App         |
-| 8      | 文件撰寫、投影片製作與簡報彩排   | 完整期末報告與簡報           |
+```
+tensorflow>=2.8  
+opencv-python  
+numpy  
+pandas  
+matplotlib  
+tqdm  
+Pillow  
+```
 
 ---
 
-## 七、成果預期  
-- 實現低於 30 ms 的即時推論體驗，年齡 MAE < 5 歲、性別準確率 > 90%  
-- 提供可用於智慧零售、社群互動的模組化 Android SDK 介面  
-- 完成專題報告、原始碼管理（GitHub）、實機 Demo 影片與簡報  
+## 六、使用說明
 
+1. **資料前處理與模型訓練**
+   ```bash
+   python TrainModel.py \
+     --data_dir ./data/UTKFace \
+     --output_dir ./results \
+     --epochs 50
+   ```
+2. **TFLite 轉檔**
+   ```bash
+   python -c "from utils import ConvertH5TOTflite; ConvertH5TOTflite('results/best_model.h5')"
+   ```
+3. **靜態影像推論**
+   ```bash
+   python Inference.py --image_path ./test.jpg --use_cam false
+   ```
+4. **即時攝影機推論**
+   ```bash
+   python Inference.py --use_cam true
+   ```
 
-## 參考資料連結
+---
 
+## 七、未來擴充
+
+- 整合 Android/Edge 裝置的 TFLite Delegate（GPU/NNAPI）
+- 支援更多人臉偵測演算法（MediaPipe、Dlib）
+- 加入模型微調與超參數自動搜尋功能
+
+---
+
+## 八、參考資料
+
+- VGGFace2 Pretrained Weights\
+  [https://github.com/rcmalli/keras-vggface](https://github.com/rcmalli/keras-vggface)
+- TensorFlow Lite Converter\
+  [https://www.tensorflow.org/lite/convert](https://www.tensorflow.org/lite/convert)
+- OpenCV Haar Cascade\
+  [https://docs.opencv.org/4.x/db/d28/tutorial\_cascade\_classifier.html](https://docs.opencv.org/4.x/db/d28/tutorial_cascade_classifier.html)
 - **Gender-and-Age-Detection Github**：Sample Project  
   https://github.com/smahesh29/Gender-and-Age-Detection  
-
 - **UTKFace 資料集 (原始版)**：20,000+ 張人臉影像，年齡範圍 0–116 歲，可作為年齡與性別預測訓練用。  
-  https://www.kaggle.com/datasets/jangedoo/utkface-new  
-
-- **UTKFace 資料集 (Aligned & Cropped 版)**：已對齊並裁切的人臉影像，方便直接用於模型訓練。  
-  https://www.kaggle.com/datasets/moritzm00/utkface-cropped 
-
-- **Adience Dataset (官方頁面)**：26,580 張真實拍攝人臉照片，包含年齡分組與性別標註。  
-  https://talhassner.github.io/home/projects/Adience/Adience-data.html 
-
-- **Adience Dataset (Kaggle 版)**：Kaggle 上整理的 Adience 年齡與性別分類資料。  
-  https://www.kaggle.com/datasets/ttungl/adience-benchmark-gender-and-age-classification 
-
-- **deepinx/age-gender-estimation**：輕量級 AgeNet/GenderNet MXNet 實作，模型大小約 1 MB，CPU 單核 10 ms 推論。  
-  https://github.com/deepinx/age-gender-estimation 
-
-- **shubham0204/Age-Gender_Estimation_TF-Android**：示範 Keras 訓練與 Colab Notebook，自動匯出 `.tflite` 模型並整合至 Android。  
-  https://github.com/shubham0204/Age-Gender_Estimation_TF-Android 
-
-- **TensorFlow Lite Task Vision API**：針對影像任務（分類、偵測、分割等）的高階 TFLite Task Library。  
-  https://ai.google.dev/edge/litert/libraries/task_library/overview 
-
-- **TensorFlow Lite Converter 文件**：介紹如何使用 Python API 或命令列將 Keras/TF 模型轉換為 `.tflite`。  
-  https://www.tensorflow.org/api_docs/python/tf/lite/TFLiteConverter 
-
-- **Chaquopy 官方文件**：Android 中嵌入 Python 的 SDK，支援 NumPy、SciPy、OpenCV 等常見 Python 套件。  
-  https://chaquo.com/chaquopy/documentation/ 
-
-- **shubham0204/Age-Gender_Estimation_TF-Android Releases**：App 範例版本與更新紀錄，包括 Jetpack Compose 與 GPU Delegate 支援。  
-  https://github.com/shubham0204/Age-Gender_Estimation_TF-Android/releases  
-
-- **MediaPipe Face Detection (Python 解決方案)**：Google MediaPipe 臉部偵測，可取得 6 個邊界框與關鍵點。  
-  https://github.com/google/mediapipe/blob/master/mediapipe/python/solutions/face_detection.py  
-
-- **dlib C++ Library**：高品質人臉偵測與特徵點萃取工具，可作人臉裁切與對齊。  
-  https://dlib.net/  
-
-- **Google Colaboratory**：雲端 Jupyter Notebook 平台，免費提供 GPU/TPU 訓練環境。  
-  https://colab.research.google.com/  
+  https://www.kaggle.com/datasets/jangedoo/utkface-new 
