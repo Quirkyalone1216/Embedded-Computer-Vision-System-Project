@@ -27,6 +27,11 @@ from keras_vggface.utils import preprocess_input
 from tensorflow.keras.applications import ResNet50
 from tensorflow.keras.applications.resnet import preprocess_input as resnet_preprocess_input
 
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score, f1_score,
+    classification_report, mean_squared_error
+)
+
 warnings.filterwarnings('ignore')
 gender_dict = {0: 'Male', 1: 'Female'}
 # 全域變數預先初始化
@@ -212,7 +217,7 @@ def evaluate_model(model, X, y_gender, y_age, batch_size=128, out_dir='results')
     """在 CPU 上批次推論並繪製混淆矩陣與年齡誤差圖。"""
     os.makedirs(out_dir, exist_ok=True)
     steps = math.ceil(len(X) / batch_size)
-    genders, ages = [], []
+    genders, ages, age_classes = [], [], []
     with tf.device('/CPU:0'):
         for i in range(steps):
             start = i * batch_size
@@ -220,8 +225,22 @@ def evaluate_model(model, X, y_gender, y_age, batch_size=128, out_dir='results')
             preds = model.predict(X[start:end], batch_size=batch_size)
             genders.append(preds[0])
             ages.append(preds[1])
+            # age classification branch
+            if len(preds) > 2:
+                age_classes.append(preds[2])
+            else:
+                # 若無 age_class 輸出，填 None
+                age_classes.append(None)
+
     y_pred_gender = np.concatenate(genders, axis=0).round().astype(int).flatten()
     y_pred_age    = np.concatenate(ages, axis=0).flatten()
+    if any(arr is not None for arr in age_classes):
+        # 合併 preds[2]
+        concatenated = np.concatenate([arr for arr in age_classes if arr is not None], axis=0)
+        y_pred_age_class = np.argmax(concatenated, axis=1)
+    else:
+        y_pred_age_class = None
+
     # 性別混淆矩陣
     cm = confusion_matrix(y_gender, y_pred_gender)
     disp = ConfusionMatrixDisplay(cm, display_labels=['Male','Female'])
@@ -229,17 +248,100 @@ def evaluate_model(model, X, y_gender, y_age, batch_size=128, out_dir='results')
     plt.title('Gender Confusion Matrix')
     plt.savefig(os.path.join(out_dir, f'{BACKBONE_TYPE}_gender_confusion_matrix.png'))
     plt.close()
+
+    # 計算並輸出性別分類指標
+    acc = accuracy_score(y_gender, y_pred_gender)
+    prec = precision_score(y_gender, y_pred_gender, zero_division=0)
+    rec = recall_score(y_gender, y_pred_gender, zero_division=0)
+    f1 = f1_score(y_gender, y_pred_gender, zero_division=0)
+    report = classification_report(y_gender, y_pred_gender, target_names=['Male','Female'], zero_division=0, output_dict=True)
+    print(f"[{BACKBONE_TYPE}] Gender Classification Metrics:")
+    print(f"  Accuracy: {acc:.4f}, Precision: {prec:.4f}, Recall: {rec:.4f}, F1-score: {f1:.4f}")
+    print(classification_report(y_gender, y_pred_gender, target_names=['Male','Female'], zero_division=0))
+    gender_metrics = {
+        'accuracy': acc,
+        'precision': prec,
+        'recall': rec,
+        'f1_score': f1,
+        'report': report,
+        'confusion_matrix': cm.tolist()
+    }
+    with open(os.path.join(out_dir, f'{BACKBONE_TYPE}_gender_metrics.json'), 'w', encoding='utf-8') as f:
+        json.dump(gender_metrics, f, ensure_ascii=False, indent=2)
+
     # 年齡誤差直方圖（以百分比表示）
     errors = np.abs(y_pred_age - y_age)
+    # 計算並輸出年齡回歸指標
+    mae = np.mean(errors)
+    mse = mean_squared_error(y_age, y_pred_age)
+    rmse = math.sqrt(mse)
+    median_err = np.median(errors)
+    pct_within_5 = np.mean(errors <= 5) * 100
+    pct_within_10 = np.mean(errors <= 10) * 100
+    print(f"[{BACKBONE_TYPE}] Age Regression Metrics:")
+    print(f"  MAE: {mae:.4f}, RMSE: {rmse:.4f}, Median Error: {median_err:.4f}")
+    print(f"  % samples with error <=5: {pct_within_5:.2f}%, <=10: {pct_within_10:.2f}%")
+    age_metrics = {
+        'mae': mae,
+        'rmse': rmse,
+        'median_error': float(median_err),
+        'pct_within_5': float(pct_within_5),
+        'pct_within_10': float(pct_within_10)
+    }
+    with open(os.path.join(out_dir, f'{BACKBONE_TYPE}_age_regression_metrics.json'), 'w', encoding='utf-8') as f:
+        json.dump(age_metrics, f, ensure_ascii=False, indent=2)
+    # 如果有 age classification，計算並輸出
+    if y_pred_age_class is not None:
+        # 真實 age_bin
+        y_true_age_bin = np.clip(y_age // 10, 0, 9)
+        cm2 = confusion_matrix(y_true_age_bin, y_pred_age_class)
+        acc2 = accuracy_score(y_true_age_bin, y_pred_age_class)
+        report2 = classification_report(
+            y_true_age_bin, y_pred_age_class,
+            target_names=[f'{i*10}-{i*10+9}' for i in range(9)] + ['90+'],
+            zero_division=0, output_dict=True
+        )
+        print(f"[{BACKBONE_TYPE}] Age Classification Metrics:")
+        print(f"  Accuracy: {acc2:.4f}")
+        print(classification_report(
+            y_true_age_bin, y_pred_age_class,
+            target_names=[f'{i*10}-{i*10+9}' for i in range(9)] + ['90+'],
+            zero_division=0
+        ))
+        age_class_metrics = {
+            'accuracy': acc2,
+            'report': report2,
+            'confusion_matrix': cm2.tolist()
+        }
+        with open(os.path.join(out_dir, f'{BACKBONE_TYPE}_age_classification_metrics.json'), 'w', encoding='utf-8') as f:
+            json.dump(age_class_metrics, f, ensure_ascii=False, indent=2)
+        # 繪製 age classification confusion matrix 圖
+        plt.figure(figsize=(8,8))
+        disp2 = ConfusionMatrixDisplay(
+            cm2,
+            display_labels=[f'{i*10}-{i*10+9}' for i in range(9)] + ['90+']
+        )
+        disp2.plot(cmap='Blues')
+        plt.title(f'{BACKBONE_TYPE} Age Classification Confusion Matrix')
+        plt.savefig(os.path.join(out_dir, f'{BACKBONE_TYPE}_age_classification_confusion_matrix.png'))
+        plt.close()
+
+    # 繪製年齡誤差直方圖
     plt.figure()
-    # 計算每個樣本的權重，使直方圖顯示百分比
     weights = np.ones_like(errors) / len(errors) * 100
     plt.hist(errors, bins=50, weights=weights, edgecolor='black')
-    plt.title('Age Error Distribution (%)')
+    plt.title(f'{BACKBONE_TYPE} Age Error Distribution (%)')
     plt.xlabel('Absolute Error (years)')
     plt.ylabel('Percentage (%)')
     plt.savefig(os.path.join(out_dir, f'{BACKBONE_TYPE}_age_error_histogram.png'))
     plt.close()
+    # 輸出 error 資料統計到 CSV
+    df_err = pd.DataFrame({
+        'true_age': y_age,
+        'pred_age': y_pred_age,
+        'abs_error': errors
+    })
+    df_err.describe().to_csv(os.path.join(out_dir, f'{BACKBONE_TYPE}_age_error_stats.csv'))
 
 
 def plot_metrics(history, out_dir='results'):
@@ -270,6 +372,10 @@ def plot_metrics(history, out_dir='results'):
     plt.legend()
     plt.savefig(os.path.join(out_dir, f'{BACKBONE_TYPE}_age_mae_graph.png'))
     plt.close()
+
+    # 同步儲存訓練歷史的數值到 CSV
+    hist_df = pd.DataFrame(history.history)
+    hist_df.to_csv(os.path.join(out_dir, f'{BACKBONE_TYPE}_training_history.csv'), index=True)
 
 
 def generate_predictions(model, X, y_gender, y_age,
