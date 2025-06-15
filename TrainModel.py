@@ -24,10 +24,13 @@ from tensorflow.keras.callbacks import ModelCheckpoint
 
 from keras_vggface.vggface import VGGFace  
 from keras_vggface.utils import preprocess_input  
+from tensorflow.keras.applications import ResNet50
+from tensorflow.keras.applications.resnet import preprocess_input as resnet_preprocess_input
 
 warnings.filterwarnings('ignore')
 gender_dict = {0: 'Male', 1: 'Female'}
-
+# 全域變數預先初始化
+BACKBONE_TYPE = None
 
 def load_metadata(base_dir):
     """讀取 UTKFace 資料，回傳 DataFrame 包含路徑、年齡、性別、年齡桶。"""
@@ -49,16 +52,19 @@ def load_metadata(base_dir):
 
 
 def extract_features(image_paths, target_size=(128, 128)):
-    """將影像讀為 RGB 並 resize，再正規化至 [0,1]。"""
+    """將影像讀為 RGB 並 resize，再依 backbone 做正規化處理。"""
+    # 預設使用 VGGFace preprocess，可傳入全局變數 BACKBONE_TYPE 控制
     feats = []
     for path in tqdm(image_paths, desc="Extracting features"):
         img = load_img(path, color_mode='rgb', target_size=target_size)
         x = np.array(img, dtype=np.float32)
-        # 使用 VGGFace 專用預處理，對輸入做 mean subtraction 等處理 :contentReference[oaicite:1]{index=1}
-        x = preprocess_input(x)  
+        if BACKBONE_TYPE == 'resnet':
+            x = resnet_preprocess_input(x)
+        else:
+            # VGGFace
+            x = preprocess_input(x)
         feats.append(x)
     X = np.stack(feats, axis=0)
-    # 移除 /255，因 preprocess_input 已處理輸入分佈，避免額外縮放導致輸入分布失真
     return X
 
 
@@ -102,10 +108,17 @@ def compute_sample_weights(y_gender):
 
 def build_model(input_shape=(128,128,3), l2_reg=1e-4, dropout_rate=0.5):
     """建立多輸出 (gender, age_reg, age_class) CNN。"""
-    # 使用 VGGFace (VGG16) 做 backbone，去除原頂層，並採用全域平均池化取得特徵
-    base_model = VGGFace(include_top=False,
-                         input_shape=input_shape,
-                         pooling='avg')  
+    # 根據 BACKBONE_TYPE 選擇 backbone
+    if BACKBONE_TYPE == 'resnet':
+        base_model = ResNet50(include_top=False,
+                              input_shape=input_shape,
+                              pooling='avg',
+                              weights='imagenet')
+    else:
+        # VGGFace
+        base_model = VGGFace(include_top=False,
+                             input_shape=input_shape,
+                             pooling='avg')
     # 凍結 backbone 層，加速微調並保留預訓練特徵
     for layer in base_model.layers:
         layer.trainable = False  
@@ -214,7 +227,7 @@ def evaluate_model(model, X, y_gender, y_age, batch_size=128, out_dir='results')
     disp = ConfusionMatrixDisplay(cm, display_labels=['Male','Female'])
     disp.plot(cmap='Blues')
     plt.title('Gender Confusion Matrix')
-    plt.savefig(os.path.join(out_dir, 'gender_confusion_matrix.png'))
+    plt.savefig(os.path.join(out_dir, f'{BACKBONE_TYPE}_gender_confusion_matrix.png'))
     plt.close()
     # 年齡誤差直方圖（以百分比表示）
     errors = np.abs(y_pred_age - y_age)
@@ -225,7 +238,7 @@ def evaluate_model(model, X, y_gender, y_age, batch_size=128, out_dir='results')
     plt.title('Age Error Distribution (%)')
     plt.xlabel('Absolute Error (years)')
     plt.ylabel('Percentage (%)')
-    plt.savefig(os.path.join(out_dir, 'age_error_histogram.png'))
+    plt.savefig(os.path.join(out_dir, f'{BACKBONE_TYPE}_age_error_histogram.png'))
     plt.close()
 
 
@@ -239,7 +252,7 @@ def plot_metrics(history, out_dir='results'):
     plt.plot(epochs, history.history['val_gender_out_accuracy'], label='Val Acc')
     plt.title('Accuracy')
     plt.legend()
-    plt.savefig(os.path.join(out_dir, 'accuracy_graph.png'))
+    plt.savefig(os.path.join(out_dir, f'{BACKBONE_TYPE}_accuracy_graph.png'))
     plt.close()
 
     plt.figure()
@@ -247,7 +260,7 @@ def plot_metrics(history, out_dir='results'):
     plt.plot(epochs, history.history['val_gender_out_loss'], label='Val Loss')
     plt.title('Loss')
     plt.legend()
-    plt.savefig(os.path.join(out_dir, 'loss_graph.png'))
+    plt.savefig(os.path.join(out_dir, f'{BACKBONE_TYPE}_loss_graph.png'))
     plt.close()
 
     plt.figure()
@@ -255,13 +268,14 @@ def plot_metrics(history, out_dir='results'):
     plt.plot(epochs, history.history['val_age_out_reg_mae'], label='Val Age MAE')
     plt.title('Age MAE')
     plt.legend()
-    plt.savefig(os.path.join(out_dir, 'age_mae_graph.png'))
+    plt.savefig(os.path.join(out_dir, f'{BACKBONE_TYPE}_age_mae_graph.png'))
     plt.close()
 
 
 def generate_predictions(model, X, y_gender, y_age,
-                         n_samples=100, out_path='results/predictions.json'):
+                         n_samples=100, out_path=f'results/predictions.json'):
     """隨機抽樣預測並輸出 JSON。"""
+    out_path = f'results/{BACKBONE_TYPE}/predictions.json'
     idxs = random.sample(range(len(X)), n_samples)
     preds = model.predict(X[idxs])
     results = []
@@ -281,25 +295,38 @@ def generate_predictions(model, X, y_gender, y_age,
 
 def main():
     base_dir = r'dataset\archive\UTKFace'
-    X, y_gender, y_age, y_age_class = preprocess_data(base_dir)
-
-    X_bal, y_gender_bal, y_age_bal = oversample_age_buckets(X, y_gender, y_age)
-    # 重新計算 oversample 後的 age_bin，並夾至 0~9
-    y_age_bin_bal   = np.clip(y_age_bal // 10, 0, 9)
-    y_age_class_bal = tf.keras.utils.to_categorical(y_age_bin_bal, num_classes=10)
-
-    sample_weights = compute_sample_weights(y_gender_bal)
-
-    model = build_model(input_shape=X_bal.shape[1:])
-    history = train_model(
-        model,
-        X_bal, y_gender_bal, y_age_bal, y_age_class_bal,
-        sample_weights=sample_weights
-    )
-
-    plot_metrics(history)
-    evaluate_model(model, X, y_gender, y_age)
-    generate_predictions(model, X, y_gender, y_age)
+    # 先讀取 metadata 與標籤
+    df = load_metadata(base_dir)
+    y_gender = df['gender'].values
+    y_age = df['age'].values
+    # 依照 BACKBONE_TYPE 分別訓練 VGGFace 與 ResNet50
+    for backbone in ['vgg', 'resnet']:
+        global BACKBONE_TYPE
+        BACKBONE_TYPE = backbone
+        print(f"=== Training with backbone: {backbone} ===")
+        # 影像 preprocess
+        X = extract_features(df['image'])
+        # oversample 只在 train 階段做，先拆 train/val 再 oversample train
+        # 此處簡單使用整體 oversample，與原行為一致
+        X_bal, y_gender_bal, y_age_bal = oversample_age_buckets(X, y_gender, y_age)
+        y_age_bin_bal = np.clip(y_age_bal // 10, 0, 9)
+        y_age_class_bal = tf.keras.utils.to_categorical(y_age_bin_bal, num_classes=10)
+        sample_weights = compute_sample_weights(y_gender_bal)
+        # 建模型並訓練
+        model = build_model(input_shape=X_bal.shape[1:])
+        ckpt_path = f"results/best_model_{backbone}.h5"
+        history = train_model(
+            model,
+            X_bal, y_gender_bal, y_age_bal, y_age_class_bal,
+            sample_weights=sample_weights,
+            checkpoint_path=ckpt_path
+        )
+        # 繪製結果放到不同子資料夾
+        out_dir = os.path.join('results', backbone)
+        plot_metrics(history, out_dir=out_dir)
+        evaluate_model(model, X, y_gender, y_age, out_dir=out_dir)
+        gen_path = os.path.join(out_dir, f'{backbone}_predictions.json')
+        generate_predictions(model, X, y_gender, y_age, out_path=gen_path)
 
 
 if __name__ == '__main__':
