@@ -9,3 +9,6 @@ src/__pycache__/
 results
 .vscode/
 __pycache__/
+model_arch.png
+LICENSE
+.ipynb_checkpoints/Gender-and-Age-Detection-checkpoint.ipynb

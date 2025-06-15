@@ -57,7 +57,9 @@ def extract_features(image_paths, target_size=(128, 128)):
         # 使用 VGGFace 專用預處理，對輸入做 mean subtraction 等處理 :contentReference[oaicite:1]{index=1}
         x = preprocess_input(x)  
         feats.append(x)
-    return np.stack(feats, axis=0) / 255.0
+    X = np.stack(feats, axis=0)
+    # 移除 /255，因 preprocess_input 已處理輸入分佈，避免額外縮放導致輸入分布失真
+    return X
 
 
 def preprocess_data(base_dir):
@@ -114,10 +116,10 @@ def build_model(input_shape=(128,128,3), l2_reg=1e-4, dropout_rate=0.5):
     g = Dropout(dropout_rate)(g)
     out_gender = Dense(1, activation='sigmoid', name='gender_out', kernel_regularizer=l2(l2_reg))(g)
 
-    # 年齡回歸分支
+    # 年齡回歸分支：改用線性輸出，以便直接預測整體年齡
     a = Dense(256, activation='relu', kernel_regularizer=l2(l2_reg))(x)
     a = Dropout(dropout_rate)(a)
-    out_age_reg = Dense(1, activation='relu', name='age_out_reg', kernel_regularizer=l2(l2_reg))(a)
+    out_age_reg = Dense(1, activation='linear', name='age_out_reg', kernel_regularizer=l2(l2_reg))(a)
 
     # 年齡分類分支
     c = Dense(256, activation='relu', kernel_regularizer=l2(l2_reg))(x)
@@ -127,8 +129,10 @@ def build_model(input_shape=(128,128,3), l2_reg=1e-4, dropout_rate=0.5):
     # 以 VGGFace 的輸入作為模型輸入，三支分支結構不變
     model = Model(inputs=base_model.input,
                   outputs=[out_gender, out_age_reg, out_age_class])
+    # 調小學習率以穩定回歸分支訓練
+    optimizer = tf.keras.optimizers.Adam(learning_rate=1e-4)
     model.compile(
-        optimizer='adam',
+        optimizer=optimizer,
         loss={
             'gender_out':    'binary_crossentropy',
             'age_out_reg':   'mae',
@@ -152,10 +156,13 @@ def build_model(input_shape=(128,128,3), l2_reg=1e-4, dropout_rate=0.5):
 def train_model(model, X, y_gender, y_age, y_age_class,
                 sample_weights=None,
                 checkpoint_path='results/best_model.h5',
-                epochs=30, batch_size=32, val_split=0.2):
+                epochs=50, batch_size=256, val_split=0.2):
     """訓練模型並儲存最佳權重。"""
     os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
+    # 新增 EarlyStopping 與 ReduceLROnPlateau 以監控 age_out_reg 的驗證 MAE
     ckpt = ModelCheckpoint(checkpoint_path, monitor='val_loss', save_best_only=True, verbose=1)
+    es = tf.keras.callbacks.EarlyStopping(monitor='val_age_out_reg_mae', patience=5, restore_best_weights=True, verbose=1)
+    rlrop = tf.keras.callbacks.ReduceLROnPlateau(monitor='val_age_out_reg_mae', factor=0.5, patience=3, verbose=1)
     fit_args = {
         'x': X,
         'y': {
@@ -166,10 +173,25 @@ def train_model(model, X, y_gender, y_age, y_age_class,
         'epochs': epochs,
         'batch_size': batch_size,
         'validation_split': val_split,
-        'callbacks': [ckpt]
+        'callbacks': [ckpt, es, rlrop]
     }
     if sample_weights is not None:
         fit_args['sample_weight'] = {'gender_out': sample_weights}
+    # 先 shuffle 資料，避免 validation_split 切到偏序列
+    idxs = np.arange(len(X))
+    np.random.shuffle(idxs)
+    # 重排 X 與標籤
+    X_shuf = X[idxs]
+    yg = fit_args['y']['gender_out'][idxs]
+    ya = fit_args['y']['age_out_reg'][idxs]
+    yc = fit_args['y']['age_out_class'][idxs]
+    # 若有 sample_weights，需同步重排
+    if 'sample_weight' in fit_args:
+        sw = fit_args['sample_weight']['gender_out'][idxs]
+        fit_args['sample_weight'] = {'gender_out': sw}
+    # 更新 fit_args
+    fit_args['x'] = X_shuf
+    fit_args['y'] = {'gender_out': yg, 'age_out_reg': ya, 'age_out_class': yc}
     return model.fit(**fit_args)
 
 
@@ -194,13 +216,15 @@ def evaluate_model(model, X, y_gender, y_age, batch_size=128, out_dir='results')
     plt.title('Gender Confusion Matrix')
     plt.savefig(os.path.join(out_dir, 'gender_confusion_matrix.png'))
     plt.close()
-    # 年齡誤差直方圖
+    # 年齡誤差直方圖（以百分比表示）
     errors = np.abs(y_pred_age - y_age)
     plt.figure()
-    plt.hist(errors, bins=50, edgecolor='black')
-    plt.title('Age Error Distribution')
+    # 計算每個樣本的權重，使直方圖顯示百分比
+    weights = np.ones_like(errors) / len(errors) * 100
+    plt.hist(errors, bins=50, weights=weights, edgecolor='black')
+    plt.title('Age Error Distribution (%)')
     plt.xlabel('Absolute Error (years)')
-    plt.ylabel('Count')
+    plt.ylabel('Percentage (%)')
     plt.savefig(os.path.join(out_dir, 'age_error_histogram.png'))
     plt.close()
 
@@ -243,9 +267,8 @@ def generate_predictions(model, X, y_gender, y_age,
     results = []
     for i, idx in enumerate(idxs):
         pg = int(round(preds[0][i][0]))
-        bin_idx = np.argmax(preds[2][i])
-        pa_reg  = preds[1][i][0]
-        pa = int(round(bin_idx * 10 + pa_reg))
+        # 直接使用回歸輸出作為年齡預測
+        pa = int(round(preds[1][i][0]))
         results.append({
             'index': idx,
             'true': {'gender': gender_dict[y_gender[idx]], 'age': int(y_age[idx])},

@@ -2,6 +2,7 @@ import numpy as np
 import cv2
 import tensorflow as tf           # for Keras model and gradients
 from utils import putText
+from keras_vggface.utils import preprocess_input
 import os
 
 SCALE = 4
@@ -43,8 +44,10 @@ def init_face_detector():
 # 3. 處理單張人臉 Region，做推論 + Grad-CAM
 # ------------------------------------------------------------------
 def predict_and_cam(model, last_conv_layer, face_img):
-    # 簡單正規化：將單通道像素值縮放到 [0,1]
-    inp = np.expand_dims(face_img.astype(np.float32) / 255.0, axis=0)
+    # 使用 VGGFace 的 preprocess_input 做 mean subtraction 等處理
+    x = face_img.astype(np.float32)
+    x = preprocess_input(x)          # 來自 keras_vggface.utils
+    inp = np.expand_dims(x, axis=0)
     # 取得預測（直接呼叫 model，避免 DataAdapter 匯入 pandas）
     outputs = model(inp, training=False)
     # 若模型回傳多個輸出，取前兩作為 gender 和 age
