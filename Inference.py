@@ -2,7 +2,7 @@ import numpy as np
 import cv2
 import tensorflow as tf           # for Keras model and gradients
 from utils import putText
-from keras_vggface.utils import preprocess_input as vggface_preprocess_input
+from tensorflow.keras import backend as K
 from tensorflow.keras.applications.resnet import preprocess_input as resnet_preprocess_input
 import os
 
@@ -10,6 +10,54 @@ SCALE = 4
 
 # 全域預設 backbone，可設為 'vggface' 或 'resnet'
 BACKBONE_TYPE = 'vggface'  # 如使用 ResNet backbone，可改成 'resnet'
+
+# ------------------------------------------------------------------
+# 新增：根據 BACKBONE_TYPE 選擇預處理函式
+# ------------------------------------------------------------------
+def preprocess_backbone(x: np.ndarray) -> np.ndarray:
+    """
+    根據全域 BACKBONE_TYPE，對輸入影像 x 進行相應的 preprocess_input 處理。
+    """
+    if BACKBONE_TYPE.lower().startswith('resnet'):
+        return resnet_preprocess_input(x)
+    else:
+        return vggface_preprocess_input(x)
+
+
+def vggface_preprocess_input(x, data_format=None, version=1):
+    x_temp = np.copy(x)
+    if data_format is None:
+        data_format = K.image_data_format()
+    assert data_format in {'channels_last', 'channels_first'}
+
+    if version == 1:
+        if data_format == 'channels_first':
+            x_temp = x_temp[:, ::-1, ...]
+            x_temp[:, 0, :, :] -= 93.5940
+            x_temp[:, 1, :, :] -= 104.7624
+            x_temp[:, 2, :, :] -= 129.1863
+        else:
+            x_temp = x_temp[..., ::-1]
+            x_temp[..., 0] -= 93.5940
+            x_temp[..., 1] -= 104.7624
+            x_temp[..., 2] -= 129.1863
+
+    elif version == 2:
+        if data_format == 'channels_first':
+            x_temp = x_temp[:, ::-1, ...]
+            x_temp[:, 0, :, :] -= 91.4953
+            x_temp[:, 1, :, :] -= 103.8827
+            x_temp[:, 2, :, :] -= 131.0912
+        else:
+            x_temp = x_temp[..., ::-1]
+            x_temp[..., 0] -= 91.4953
+            x_temp[..., 1] -= 103.8827
+            x_temp[..., 2] -= 131.0912
+    else:
+        raise NotImplementedError
+
+    return x_temp
+
 
 # ------------------------------------------------------------------
 # 0. Grad-CAM: 產生熱力圖
@@ -50,10 +98,7 @@ def init_face_detector():
 def predict_and_cam(model, last_conv_layer, face_img):
     # 選擇預處理：根據 BACKBONE_TYPE 動態使用 VGGFace 或 ResNet 的 preprocess_input
     x = face_img.astype(np.float32)
-    if BACKBONE_TYPE.lower().startswith('resnet'):
-        x = resnet_preprocess_input(x)
-    else:
-        x = vggface_preprocess_input(x)
+    x = preprocess_backbone(x)
     inp = np.expand_dims(x, axis=0)
     # 取得預測（直接呼叫 model，避免 DataAdapter 匯入 pandas）
     outputs = model(inp, training=False)
@@ -176,7 +221,7 @@ def main():
     # 定義多個模型與對應 backbone
     model_configs = [
         (r'model\best_model_vgg.h5', 'vggface'),
-        (r'model\best_model_resnet.h5', 'resnet'),
+        # (r'model\best_model_resnet.h5', 'resnet'),
     ]
     for model_path, backbone in model_configs:
         # 設定全域 BACKBONE_TYPE
