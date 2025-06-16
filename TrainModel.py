@@ -315,14 +315,19 @@ def evaluate_model(model, X, y_gender, y_age, batch_size=128, out_dir='results')
         }
         with open(os.path.join(out_dir, f'{BACKBONE_TYPE}_age_classification_metrics.json'), 'w', encoding='utf-8') as f:
             json.dump(age_class_metrics, f, ensure_ascii=False, indent=2)
-        # 繪製 age classification confusion matrix 圖
-        plt.figure(figsize=(8,8))
+
+        # 繪製 age classification confusion matrix 圖，並避免標題被切到
+        plt.figure(figsize=(12, 8))
         disp2 = ConfusionMatrixDisplay(
             cm2,
             display_labels=[f'{i*10}-{i*10+9}' for i in range(9)] + ['90+']
         )
         disp2.plot(cmap='Blues')
+        # 旋轉 x 軸標籤並對齊
+        plt.xticks(rotation=45, ha='right')
         plt.title(f'{BACKBONE_TYPE} Age Classification Confusion Matrix')
+        # tight_layout 留出上方空間避免 title 被切，rect 的 top 可依需要微調（例如 0.9~0.95）
+        plt.tight_layout(rect=[0, 0, 1, 0.95])
         plt.savefig(os.path.join(out_dir, f'{BACKBONE_TYPE}_age_classification_confusion_matrix.png'))
         plt.close()
 
