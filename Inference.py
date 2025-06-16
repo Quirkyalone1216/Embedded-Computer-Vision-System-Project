@@ -2,10 +2,14 @@ import numpy as np
 import cv2
 import tensorflow as tf           # for Keras model and gradients
 from utils import putText
-from keras_vggface.utils import preprocess_input
+from keras_vggface.utils import preprocess_input as vggface_preprocess_input
+from tensorflow.keras.applications.resnet import preprocess_input as resnet_preprocess_input
 import os
 
 SCALE = 4
+
+# 全域預設 backbone，可設為 'vggface' 或 'resnet'
+BACKBONE_TYPE = 'vggface'  # 如使用 ResNet backbone，可改成 'resnet'
 
 # ------------------------------------------------------------------
 # 0. Grad-CAM: 產生熱力圖
@@ -44,9 +48,12 @@ def init_face_detector():
 # 3. 處理單張人臉 Region，做推論 + Grad-CAM
 # ------------------------------------------------------------------
 def predict_and_cam(model, last_conv_layer, face_img):
-    # 使用 VGGFace 的 preprocess_input 做 mean subtraction 等處理
+    # 選擇預處理：根據 BACKBONE_TYPE 動態使用 VGGFace 或 ResNet 的 preprocess_input
     x = face_img.astype(np.float32)
-    x = preprocess_input(x)          # 來自 keras_vggface.utils
+    if BACKBONE_TYPE.lower().startswith('resnet'):
+        x = resnet_preprocess_input(x)
+    else:
+        x = vggface_preprocess_input(x)
     inp = np.expand_dims(x, axis=0)
     # 取得預測（直接呼叫 model，避免 DataAdapter 匯入 pandas）
     outputs = model(inp, training=False)
@@ -97,7 +104,12 @@ def process_frame(frame, face_cascade, model):
         face = cv2.resize(frame[y:y+h, x:x+w], (128, 128))
         # 如模型在 RGB 空間訓練，可加這行進行 BGR→RGB 轉換
         face_img = cv2.cvtColor(face, cv2.COLOR_BGR2RGB)
-        age, gender_prob, heatmap = predict_and_cam(model, 'conv5_3', face_img)
+        # 動態決定最後 conv 層名稱：VGGFace 常為 'conv5_3'，ResNet50 常為 'conv5_block3_out'
+        if BACKBONE_TYPE.lower().startswith('resnet'):
+            last_conv = 'conv5_block3_out'
+        else:
+            last_conv = 'conv5_3'
+        age, gender_prob, heatmap = predict_and_cam(model, last_conv, face_img)
         preds_list.append((age, gender_prob, heatmap))
     if faces is not None and len(faces) > 0:
         frame = annotate_frame(frame, faces, preds_list, None)
@@ -156,16 +168,25 @@ def process_image(image_path, face_cascade, model, save_path=None):
 # 9. 主程式
 # ------------------------------------------------------------------
 def main():
-    # 載入 Keras 模型 (.h5)
-    model = load_keras_model(r'results/best_model.h5')
     # 初始化偵測器
     face_cascade = init_face_detector()
-    # # 啟動即時辨識
-    # process_realtime(face_cascade, model)
-    # 靜態圖片推論
-    img_path = r'tmp\archive\train\51-60\8.jpg'
+    # 靜態圖片路徑
+    img_path = r'tmp\archive\train\21-30\8.jpg'
     os.makedirs('results', exist_ok=True)
-    process_image(img_path, face_cascade, model)
+    # 定義多個模型與對應 backbone
+    model_configs = [
+        (r'model\best_model_vgg.h5', 'vggface'),
+        (r'model\best_model_resnet.h5', 'resnet'),
+    ]
+    for model_path, backbone in model_configs:
+        # 設定全域 BACKBONE_TYPE
+        global BACKBONE_TYPE
+        BACKBONE_TYPE = backbone
+        # 載入模型
+        model = load_keras_model(model_path)
+        # process_image(img_path, face_cascade, model)
+        # 啟動即時辨識
+        process_realtime(face_cascade, model)
 
 if __name__ == '__main__':
     main()
