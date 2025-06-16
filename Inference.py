@@ -86,6 +86,18 @@ def load_keras_model(model_path):
     return model
 
 # ------------------------------------------------------------------
+# 新增：載入 TFLite 模型
+# ------------------------------------------------------------------
+def load_tflite_model(model_path):
+    """
+    載入 TFLite 模型，並回傳 Interpreter 實例。
+    注意：TFLite Interpreter 不支援梯度計算，Grad-CAM 無法使用。
+    """
+    interpreter = tf.lite.Interpreter(model_path=model_path)
+    interpreter.allocate_tensors()
+    return interpreter
+
+# ------------------------------------------------------------------
 # 2. 初始化 Haar Cascade（人臉偵測器）
 # ------------------------------------------------------------------
 def init_face_detector():
@@ -100,13 +112,30 @@ def predict_and_cam(model, last_conv_layer, face_img):
     x = face_img.astype(np.float32)
     x = preprocess_backbone(x)
     inp = np.expand_dims(x, axis=0)
-    # 取得預測（直接呼叫 model，避免 DataAdapter 匯入 pandas）
-    outputs = model(inp, training=False)
-    # 若模型回傳多個輸出，取前兩作為 gender 和 age
-    preds_gender, preds_age = outputs[0], outputs[1]
-    # 產生 Grad-CAM 熱力圖 (性別分類, 索引 0)
-    heatmap = make_gradcam_heatmap(inp, model, last_conv_layer, pred_index=0)
-    return float(preds_age[0][0]), preds_gender[0][0], heatmap
+    # 如果是 TFLite Interpreter，使用 Interpreter 進行推論；否則用 Keras model
+    if isinstance(model, tf.lite.Interpreter):
+        # TFLite 不支援梯度，無法產生 Grad-CAM
+        input_details = model.get_input_details()
+        output_details = model.get_output_details()
+        # 假設只有一個輸入 tensor
+        model.set_tensor(input_details[0]['index'], inp)
+        model.invoke()
+        # 假設輸出有兩個 tensors: gender output, age output (依模型順序)
+        # 依 output_details 順序取值
+        out_tensors = [model.get_tensor(d['index']) for d in output_details]
+        # 取前兩個輸出，順序需與 TFLite 模型匯出時一致
+        preds_gender = out_tensors[0]
+        preds_age = out_tensors[1]
+        heatmap = None
+        return float(preds_age[0][0]), preds_gender[0][0], heatmap
+    else:
+        # 取得預測（直接呼叫 model，避免 DataAdapter 匯入 pandas）
+        outputs = model(inp, training=False)
+        # 若模型回傳多個輸出，取前兩作為 gender 和 age
+        preds_gender, preds_age = outputs[0], outputs[1]
+        # 產生 Grad-CAM 熱力圖 (性別分類, 索引 0)
+        heatmap = make_gradcam_heatmap(inp, model, last_conv_layer, pred_index=0)
+        return float(preds_age[0][0]), preds_gender[0][0], heatmap
 
 # ------------------------------------------------------------------
 # 4. 繪製並疊加 Grad-CAM
@@ -126,8 +155,11 @@ def annotate_frame(frame, faces, preds_list, labels):
     gender_labels = ['Male', 'Female']
 
     for (x, y, w, h), (age_val, gender_prob, heatmap) in zip(faces, preds_list):
-        # # CAM 疊加
-        # frame = overlay_heatmap(frame, heatmap, x, y, w, h)
+        # CAM 疊加：若 heatmap 為 None，表示 TFLite 推論無法產生 Grad-CAM，跳過
+        if heatmap is not None:
+            # 若要顯示，可解除下行註解
+            # frame = overlay_heatmap(frame, heatmap, x, y, w, h)
+            pass
         # 文字
         gen_idx = 1 if gender_prob > 0.5 else 0
         age_text = f'Age: {age_val:.1f}'
@@ -220,15 +252,18 @@ def main():
     os.makedirs('results', exist_ok=True)
     # 定義多個模型與對應 backbone
     model_configs = [
-        (r'model\best_model_vgg.h5', 'vggface'),
+        (r'model\face_model.tflite', 'vggface'),
         # (r'model\best_model_resnet.h5', 'resnet'),
     ]
     for model_path, backbone in model_configs:
         # 設定全域 BACKBONE_TYPE
         global BACKBONE_TYPE
         BACKBONE_TYPE = backbone
-        # 載入模型
-        model = load_keras_model(model_path)
+        # 載入模型：依副檔名決定 Keras 還是 TFLite
+        if model_path.lower().endswith('.tflite'):
+            model = load_tflite_model(model_path)
+        else:
+            model = load_keras_model(model_path)
         # process_image(img_path, face_cascade, model)
         # 啟動即時辨識
         process_realtime(face_cascade, model)

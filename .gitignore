@@ -12,5 +12,4 @@ __pycache__/
 model_arch.png
 LICENSE
 .ipynb_checkpoints/Gender-and-Age-Detection-checkpoint.ipynb
-model/best_model_resnet.h5
-model/best_model_vgg.h5
+model
