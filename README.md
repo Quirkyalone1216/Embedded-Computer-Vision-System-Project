@@ -6,7 +6,7 @@
 
 ## 二、專案概述
 
-本專案提供一個完整的從資料前處理、模型訓練、量化轉檔到即時推論的 Python Pipeline，透過已標註的 UTKFace 資料集，以 VGGFace 為 backbone 訓練多輸出神經網路，同時支援 TensorFlow Lite 轉檔及 OpenCV 即時推論介面。
+本專案提供一個完整的從資料前處理、模型訓練、量化轉檔到即時推論的 Python Pipeline，透過已標註的 UTKFace 資料集，以 VGGFace 為 backbone 訓練多輸出神經網路，同時支援 TensorFlow Lite 轉檔及 OpenCV 即時推論介面。並提供 Android 專案，包含 Android Studio 專案、Android.mk 與 CMakeLists.txt，支援 Android NDK 建置。
 
 ---
 
@@ -17,6 +17,7 @@
 3. **效能評估**：繪製訓練/驗證階段的 Loss、Accuracy、MAE 曲線，並生成混淆矩陣與年齡誤差直方圖。
 4. **TensorFlow Lite 轉檔**：將訓練後的 `.h5` 模型轉為動態範圍量化的 `.tflite`，支援書寫到檔案並驗證轉檔結果。
 5. **推論腳本**：利用 OpenCV Haar Cascade 偵測人臉，支援靜態影像或攝影機串流的即時推論，並可疊加預測結果與 Grad-CAM 熱力圖。
+6. **Android 專案**：提供 Android 專案，包含 Android Studio 專案、Android.mk 與 CMakeLists.txt，支援 Android NDK 建置。
 
 ---
 
@@ -27,10 +28,9 @@
 ├── utils.py            # 工具函式：VGGFace 前處理、Label Decode、文字標註、TFLite 轉檔
 ├── Inference.py        # 推論主程式：人臉偵測、推論、Grad-CAM 整合與顯示/存檔
 ├── results/            # 訓練結果（模型權重、指標圖、Log）
-│   ├── opt/            # 優化參數或轉檔模型存放
-│   └── figures/        # 評估圖表輸出
 ├── data/               # 放置原始 UTKFace 影像資料集
 └── README.md           # 專案說明
+└── AndroidCode         # Android 專案
 ```
 
 ---
@@ -84,7 +84,6 @@ Pillow
 
 ## 七、未來擴充
 
-- 整合 Android/Edge 裝置的 TFLite Delegate（GPU/NNAPI）
 - 支援更多人臉偵測演算法（MediaPipe、Dlib）
 - 加入模型微調與超參數自動搜尋功能
 
